@@ -1,0 +1,95 @@
+    #! /usr/bin/env bash
+
+set -o allexport;
+[ -f .env ] && source .env;
+set +o allexport
+
+DEPLOY_REGION="us-east-1"
+export VERSION=$(<app.version)
+export BRANCH=$(git branch | sed -n -e 's/^\* \(.*\)/\1/p')
+export REQUIRED_FILES=("")
+
+# if [ "$BRANCH" = "staging" ]; then
+#     DEPLOY_REGION="us-east-2"
+# elif [ "$BRANCH" = "production" ]; then
+#     DEPLOY_REGION="us-east-1"
+# else
+#     echo "Unknown branch: $BRANCH"
+#     exit 1
+# fi
+
+if [ -z "${DEPLOY_REGION}" ]; then
+    printf "\nDEPLOY_REGION is missing or not a valid region.\n"
+    exit 1
+fi
+
+check_deployment_version() {
+    printf "\nCheck file version...\n"
+
+    aws s3 cp s3://ai.clickster.io/app.version ./app.old.version
+    OLD_VERSION=$(<./app.old.version)
+
+    if [  $VERSION == $OLD_VERSION ]; then
+        printf "\nERROR: CHECK YOUR VERSION FILE...\n"
+        rm -f ./app.old.version
+        exit 1
+    else
+        printf "\nDeploying version $VERSION to production...\n"
+    fi
+
+    rm -f ./app.old.version
+}
+
+list_required_files () {
+    printf "\nSearching required files...\n"
+
+    REQUIRED_FILES=$(aws s3api list-objects --output text --query "Contents[].{Key: Key}" --bucket ai.clickster.io --prefix "assets/")
+}
+
+download_files() {
+    printf "\nDownloading files...\n"
+
+    for file in ${REQUIRED_FILES[@]}; do
+        if [ ! -f "${file#*assets/}" ]; then
+            printf "${file#*assets/} not found, downloading...\n"
+            aws s3 cp "s3://ai.clickster.io/assets/${file#*assets/}" .
+        else
+            printf "$file found, skipping download...\n"
+        fi
+    done
+}
+
+delete_files() {
+    printf "\nDeleting files...\n"
+
+    for file in ${REQUIRED_FILES[@]}; do
+    if [ -f "${file#*assets/}" ]; then
+        printf "${file#*assets/} founded, deleting...\n"
+        rm -rf "./${file#*assets/}"
+    fi
+    done
+}
+
+
+build() {
+    printf "\nBuilding project ...\n"
+    docker build . -t 933878250813.dkr.ecr.us-east-1.amazonaws.com/${BRANCH:0:1}-clickster-ai:latest -t 933878250813.dkr.ecr.us-east-1.amazonaws.com/${BRANCH:0:1}-clickster-ai:$VERSION \
+        && aws ecr get-login-password --region $DEPLOY_REGION | docker login --username AWS --password-stdin 933878250813.dkr.ecr.$DEPLOY_REGION.amazonaws.com \
+        && docker push 933878250813.dkr.ecr.us-east-1.amazonaws.com/${BRANCH:0:1}-clickster-ai:latest \
+        && docker push 933878250813.dkr.ecr.us-east-1.amazonaws.com/${BRANCH:0:1}-clickster-ai:$VERSION
+}
+
+
+update_new_version() {
+    aws s3 cp ./app.version s3://ai.clickster.io
+}
+
+check_deployment_version
+
+# list_required_files
+
+# download_files
+
+build
+
+# delete_files

@@ -1,0 +1,42 @@
+# See: https://circleci.com/docs/2.0/configuration-reference
+
+
+version: 2.1
+
+orbs:
+  node: circleci/node@4.7
+
+executors:
+  workspace-executor:
+    docker:
+      - image: smashmedia/rush-monorepo:latest
+    working_directory: /tmp/deployment
+
+
+jobs:
+  deploy:
+    executor: workspace-executor
+    steps:
+      - attach_workspace:
+          at: .
+      - checkout
+      - setup_remote_docker:
+          version: 20.10.14
+      - run:
+          name: Build Image
+          command: |
+            ./scripts/build us-east-2 \
+            && ./scripts/deploy
+
+workflows:
+  clickster-ai:
+    when:
+      or:
+        - equal: [production, << pipeline.git.branch >>]
+        - equal: [staging, << pipeline.git.branch >>]
+    jobs:
+      - deploy:
+          name: Build clicksterAi
+          context: clickster-ai
+
+

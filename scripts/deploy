@@ -1,0 +1,48 @@
+#! /usr/bin/env bash
+
+DEPLOY_REGION="us-east-1"
+PARSED_APP_NAME="p-clicksterAi"
+BRANCH=$(git branch | sed -n -e 's/^\* \(.*\)/\1/p')
+
+export AWS_PAGER=""
+
+
+# if [[ $BRANCH == "production" ]]; then
+#   DEPLOY_REGION='us-east-1'
+# elif [[ $BRANCH == "staging" ]]; then
+#   DEPLOY_REGION='us-east-2'
+# else
+#   printf "\nBranch not allowed for deploying....\n"
+#   exit 1
+# fi
+
+awaitUntil() {
+  for ((i=$1; i>=0; i--)); do
+    echo -en "\r$i seconds until deploy is complete..."
+    sleep 1
+  done
+}
+
+deploy() {
+  start=`date +%s`
+  export CLUSTER_TO_DEPLOY=$(aws ecs list-clusters --region $DEPLOY_REGION --query "clusterArns[?contains(@, 'default-cluster')]" --output text | node -e "console.log(process.argv[1].split('/')[1])" $(cat))
+  export SERVICE_NAME=$(aws ecs list-services --region $DEPLOY_REGION --cluster $CLUSTER_TO_DEPLOY --query "sort(serviceArns[?contains(@, '$PARSED_APP_NAME')])[0]" --output json | jq -r '.' | node -e "console.log(process.argv[1].split('/')[2])" $(cat))
+  logger.info "Depploying $SERVICE_NAME ..."
+  C_TASK_ARN=$(aws ecs list-tasks --region $DEPLOY_REGION --cluster $CLUSTER_TO_DEPLOY --service $SERVICE_NAME --output text)
+  logger.info "$DEPLOY_REGION $CLUSTER_TO_DEPLOY $SERVICE_NAME"
+  logger.info "Relaunching service... "
+  aws ecs update-service --region $DEPLOY_REGION --cluster $CLUSTER_TO_DEPLOY --service $SERVICE_NAME --force-new-deployment
+  awaitUntil 225
+  end=`date +%s`
+  runtime=$((end-start))
+  logger.debug "Total deployment duration: $runtime s"
+}
+
+
+if [[ $BRANCH == "production" ]]; then
+  PARSED_APP_NAME="p-clicksterAi"
+  deploy
+elif [[ $BRANCH == "staging" ]]; then
+  PARSED_APP_NAME="s-clicksterAi"
+  deploy
+fi
